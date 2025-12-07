@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Golf Poker: Ultimate Edition</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #14532d; touch-action: manipulation; } /* green-900 */
+        .card-enter { animation: flyIn 0.3s ease-out; }
+        @keyframes flyIn {
+            from { transform: translateY(10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .suit-red { color: #dc2626; }
+        .suit-black { color: #1f2937; }
+        .felt-bg {
+            background-color: #15803d;
+            background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23166534' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+        }
+        @keyframes popIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop { animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // --- POKER LOGIC ---
+        const SUITS = ['♠', '♥', '♣', '♦'];
+        const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+        const MAX_HAND_SIZE = 7; 
+        
+        const getRankValue = (rank) => RANKS.indexOf(rank) + 2;
+
+        const createDeck = () => {
+            let deck = [];
+            for (let s of SUITS) {
+                for (let r of RANKS) {
+                    deck.push({ 
+                        suit: s, 
+                        rank: r, 
+                        id: `${r}${s}-${Math.random().toString(36).substr(2, 9)}`, 
+                        color: (s === '♥' || s === '♦') ? 'suit-red' : 'suit-black',
+                        value: getRankValue(r)
+                    });
+                }
+            }
+            return shuffle(deck);
+        };
+
+        const shuffle = (array) => {
+            let deck = [...array];
+            for (let i = deck.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [deck[i], deck[j]] = [deck[j], deck[i]];
+            }
+            return deck;
+        };
+
+        const evaluateHand = (hand) => {
+            if (!hand || hand.length < 5) return { name: "Building Hand...", value: 0 };
+            
+            const getCombinations = (arr, k) => {
+                if (k === 1) return arr.map(e => [e]);
+                const combs = [];
+                arr.forEach((e, i) => {
+                    const sub = getCombinations(arr.slice(i + 1), k - 1);
+                    sub.forEach(s => combs.push([e, ...s]));
+                });
+                return combs;
+            };
+
+            const cardsToEval = hand.length > 5 ? getCombinations(hand, 5) : [hand];
+            
+            let bestRank = { value: -1 };
+
+            cardsToEval.forEach(fiveCardHand => {
+                const rank = score5CardHand(fiveCardHand);
+                if (rank.value > bestRank.value) {
+                    bestRank = rank;
+                }
+            });
+            return bestRank;
+        };
+
+        const score5CardHand = (hand) => {
+             const sorted = [...hand].sort((a, b) => b.value - a.value);
+            const rankCounts = {};
+            const suitCounts = {};
+            sorted.forEach(c => {
+                rankCounts[c.value] = (rankCounts[c.value] || 0) + 1;
+                suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1;
+            });
+
+            const isFlush = Object.values(suitCounts).some(count => count >= 5);
+            
+            let uniqueValues = [...new Set(sorted.map(c => c.value))];
+            if (uniqueValues.includes(14)) uniqueValues.push(1); 
+            uniqueValues.sort((a, b) => b - a);
+
+            let straightHigh = 0;
+            let streak = 0;
+            for (let i = 0; i < uniqueValues.length - 1; i++) {
+                if (uniqueValues[i] - uniqueValues[i+1] === 1) {
+                    streak++;
+                    if (streak >= 4) {
+                        straightHigh = uniqueValues[i - 3];
+                        break;
+                    }
+                } else {
+                    streak = 0;
+                }
+            }
+            const isStraight = straightHigh > 0;
+            const counts = Object.values(rankCounts);
+            const is4Kind = counts.includes(4);
+            const is3Kind = counts.includes(3);
+            const pairCount = counts.filter(c => c === 2).length;
+            const isFullHouse = (is3Kind && pairCount >= 1) || (counts.filter(c => c === 3).length >= 2); 
+
+            const highCard = sorted[0].value;
+
+            if (isStraight && isFlush) return { name: "Straight Flush", value: 8000 + straightHigh }; 
+            if (is4Kind) return { name: "Four of a Kind", value: 7000 + highCard };
+            if (isFullHouse) return { name: "Full House", value: 6000 + highCard };
+            if (isFlush) return { name: "Flush", value: 5000 + highCard };
+            if (isStraight) return { name: "Straight", value: 4000 + straightHigh };
+            if (is3Kind) return { name: "Three of a Kind", value: 3000 + highCard };
+            if (pairCount >= 2) return { name: "Two Pair", value: 2000 + highCard };
+            if (pairCount === 1) return { name: "Pair", value: 1000 + highCard };
+            
+            return { name: "High Card", value: highCard };
+        };
+
+        // --- COMPONENTS ---
+
+        const Confetti = () => {
+            const canvasRef = React.useRef(null);
+
+            React.useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+
+                const pieces = [];
+                const colors = ['#fde047', '#ef4444', '#3b82f6', '#22c55e', '#ffffff'];
+
+                for(let i=0; i<150; i++) {
+                    pieces.push({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height - canvas.height,
+                        rotation: Math.random() * 360,
+                        color: colors[Math.floor(Math.random() * colors.length)],
+                        size: Math.random() * 8 + 4,
+                        speed: Math.random() * 5 + 2
+                    });
+                }
+
+                let animationId;
+                const animate = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    pieces.forEach(p => {
+                        p.y += p.speed;
+                        p.rotation += 2;
+                        if(p.y > canvas.height) p.y = -20;
+                        
+                        ctx.save();
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(p.rotation * Math.PI / 180);
+                        ctx.fillStyle = p.color;
+                        ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size);
+                        ctx.restore();
+                    });
+                    animationId = requestAnimationFrame(animate);
+                };
+                animate();
+
+                return () => cancelAnimationFrame(animationId);
+            }, []);
+
+            return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-[100]" />;
+        };
+
+        const Card = ({ card, small = false, faceDown = false, onClick, highlight = false, isSelected = false }) => {
+            if (faceDown) {
+                return (
+                    <div className={`${small ? 'w-8 h-12' : 'w-14 h-20'} bg-blue-900 rounded-lg border-2 border-white shadow-lg flex items-center justify-center`}>
+                        <span className={`${small ? 'text-lg' : 'text-2xl'} opacity-50`}>⛳</span>
+                    </div>
+                );
+            }
+            return (
+                <div className="relative">
+                    <div 
+                        onClick={() => onClick && onClick(card)}
+                        className={`${small ? 'w-8 h-12 text-xs' : 'w-14 h-20 text-xl'} 
+                        ${highlight ? 'ring-4 ring-yellow-400 -translate-y-2' : ''}
+                        ${isSelected ? 'opacity-50 ring-4 ring-red-500 scale-95 grayscale' : ''}
+                        bg-white rounded-lg border border-gray-300 shadow-md flex flex-col items-center justify-center font-bold ${card.color} select-none transition-all cursor-pointer`}
+                    >
+                        <span>{card.rank}</span>
+                        <span className={`${small ? 'text-sm' : 'text-lg'} leading-none`}>{card.suit}</span>
+                    </div>
+                    {isSelected && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <span className="text-red-600 text-4xl font-bold">X</span>
+                        </div>
+                    )}
+                    {card.isNew && !isSelected && (
+                        <div className="absolute -top-2 -right-2 bg-yellow-400 text-[10px] text-black font-bold px-1 rounded shadow pointer-events-none animate-pulse">
+                            NEW
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const CheatSheet = ({ onClose }) => (
+            <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={onClose}>
+                <div className="bg-white rounded-xl max-w-sm w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+                    <div className="bg-green-800 p-4 text-white flex justify-between items-center">
+                        <h2 className="font-bold text-xl">Rules</h2>
+                        <button onClick={onClose} className="text-2xl">&times;</button>
+                    </div>
+                    <div className="p-4 space-y-4 max-h-[80vh] overflow-y-auto">
+                        <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                            <h3 className="font-bold text-green-800 mb-2 border-b border-green-200 pb-1">🃏 Deal 1 Card</h3>
+                            <ul className="text-sm space-y-2 text-gray-700">
+                                <li>🐦 <strong>Birdie</strong></li>
+                                <li>⛳ <strong>1-Putt</strong> (Net Double-Bogey or better)</li>
+                                <li>🏖️ <strong>Sandy</strong> (Up & Down from Bunker)</li>
+                                <li>🎯 <strong>Greenie</strong> (CTP on Par 3 + Par or better)</li>
+                                <li>🔨 <strong>Whammie</strong> (CTP in Reg on Par 5 + Par or better)</li>
+                            </ul>
+                        </div>
+                        <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+                            <h3 className="font-bold text-yellow-800 mb-2 border-b border-yellow-200 pb-1">🃏🃏 Deal 2 Cards (Bonus!)</h3>
+                            <ul className="text-sm space-y-2 text-gray-700">
+                                <li>🦅 <strong>Eagle</strong></li>
+                                <li>👌 <strong>0-Putt</strong> (Chip-in from off green)</li>
+                            </ul>
+                        </div>
+                        <div className="bg-red-50 p-3 rounded-lg border border-red-200">
+                            <h3 className="font-bold text-red-800 mb-2 border-b border-red-200 pb-1">💸 Pay the Pot ($1)</h3>
+                            <ul className="text-sm space-y-2 text-gray-700">
+                                <li>🌊 <strong>Water Hazard</strong> (Add $1)</li>
+                                <li>⛳ <strong>3-Putt</strong> (Add $1)</li>
+                                <li>🐢 <strong>4-Putt</strong> (Add $2)</li>
+                                <li className="text-xs italic text-gray-500 pt-1">Pay $1 for each putt over 2!</li>
+                            </ul>
+                        </div>
+                        <div className="text-center text-xs text-gray-400 font-mono">Max Hand Size: {MAX_HAND_SIZE} Cards</div>
+                    </div>
+                </div>
+            </div>
+        );
+
+        // --- WINNER MODAL ---
+        const WinnerModal = ({ players, pot, onNewGame }) => {
+            if (!players || players.length === 0) return null;
+
+            // Sort players by hand value
+            const rankedPlayers = [...players]
+                .map(p => ({ ...p, bestHand: evaluateHand(p.hand) }))
+                .sort((a, b) => b.bestHand.value - a.bestHand.value);
+
+            const winner = rankedPlayers[0];
+
+            return (
+                <div className="fixed inset-0 bg-black/90 z-[60] flex flex-col items-center justify-center p-4 overflow-y-auto">
+                    <Confetti />
+                    
+                    <div className="w-full max-w-md animate-pop relative z-[70]">
+                        {/* Winner Banner */}
+                        <div className="bg-yellow-400 text-yellow-900 p-6 rounded-t-2xl text-center shadow-2xl border-b-4 border-yellow-600">
+                            <div className="text-sm font-bold uppercase tracking-widest mb-1 opacity-70">Winner</div>
+                            <h1 className="text-4xl font-black mb-2">{winner.name}</h1>
+                            <div className="inline-block bg-yellow-900 text-yellow-100 px-4 py-1 rounded-full text-sm font-bold shadow-inner">
+                                {winner.bestHand.name}
+                            </div>
+                            <div className="mt-4 text-6xl font-black text-green-800 drop-shadow-sm">
+                                ${pot}
+                            </div>
+                            <div className="text-xs font-bold text-yellow-800 opacity-60 mt-1">TOTAL POT</div>
+                        </div>
+
+                        {/* Leaderboard */}
+                        <div className="bg-white rounded-b-2xl p-4 shadow-2xl">
+                            <h3 className="text-gray-400 text-xs font-bold uppercase mb-3 text-center">Full Results</h3>
+                            <div className="space-y-3">
+                                {rankedPlayers.map((p, idx) => (
+                                    <div key={p.id} className={`flex justify-between items-center p-3 rounded-lg ${idx === 0 ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50 border border-gray-100'}`}>
+                                        <div className="flex items-center gap-3">
+                                            <span className={`font-bold w-6 text-center ${idx === 0 ? 'text-yellow-600 text-xl' : 'text-gray-400'}`}>
+                                                {idx === 0 ? '👑' : `#${idx + 1}`}
+                                            </span>
+                                            <div>
+                                                <div className="font-bold text-gray-800">{p.name}</div>
+                                                <div className="text-xs text-gray-500">{p.bestHand.name}</div>
+                                            </div>
+                                        </div>
+                                        {/* Optional: Show tiny icons of best hand? */}
+                                        <div className="text-xs text-gray-400">{p.hand.length} cards</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <button 
+                                onClick={onNewGame}
+                                className="w-full mt-6 bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-95"
+                            >
+                                Start New Game 🔄
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- CONFIRM MODALS ---
+        const ConfirmEndModal = ({ onConfirm, onCancel }) => (
+            <div className="fixed inset-0 bg-black/80 z-[80] flex flex-col items-center justify-center p-4">
+                <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center animate-pop">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">End the Round?</h2>
+                    <p className="text-gray-500 mb-6">This will reveal all cards and declare a winner.</p>
+                    <div className="flex gap-3">
+                        <button 
+                            onClick={onCancel}
+                            className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-3 rounded-xl"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            onClick={onConfirm}
+                            className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 rounded-xl shadow-lg"
+                        >
+                            End Game 🏆
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const ConfirmResetModal = ({ onConfirm, onCancel }) => (
+            <div className="fixed inset-0 bg-black/80 z-[80] flex flex-col items-center justify-center p-4">
+                <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center animate-pop">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">Start New Game?</h2>
+                    <p className="text-gray-500 mb-6">This will clear the current game but keep your players and settings.</p>
+                    <div className="flex gap-3">
+                        <button 
+                            onClick={onCancel}
+                            className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-3 rounded-xl"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            onClick={onConfirm}
+                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl shadow-lg"
+                        >
+                            Reset & New Game
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        // --- TOOLS COMPONENT ---
+        const ToolsModal = ({ onClose, onImport, currentData, onUndo, hasHistory }) => {
+            const [importText, setImportText] = React.useState("");
+            const [copyStatus, setCopyStatus] = React.useState("📋 Copy Game Data");
+
+            const exportString = JSON.stringify(currentData);
+
+            const handleCopy = () => {
+                const textArea = document.createElement("textarea");
+                textArea.value = exportString;
+                textArea.style.position = "fixed";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                    const successful = document.execCommand('copy');
+                    if (successful) {
+                        setCopyStatus("✅ Copied!");
+                        setTimeout(() => setCopyStatus("📋 Copy Game Data"), 2000);
+                    } else {
+                        setCopyStatus("❌ Failed");
+                    }
+                } catch (err) {
+                    setCopyStatus("❌ Error");
+                }
+                document.body.removeChild(textArea);
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-900 z-50 flex flex-col p-6 overflow-y-auto">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-2xl font-bold text-white">⚙️ Tools</h2>
+                        <button onClick={onClose} className="text-gray-400 text-xl">&times;</button>
+                    </div>
+
+                    <div className="space-y-6">
+                        {/* Undo Section */}
+                        <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                            <h3 className="text-white font-bold mb-2">Undo Last Action</h3>
+                            <button 
+                                onClick={onUndo} 
+                                disabled={!hasHistory}
+                                className="w-full bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 rounded-lg"
+                            >
+                                ↩️ Undo
+                            </button>
+                        </div>
+
+                        <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                            <h3 className="text-white font-bold mb-2">Save Game</h3>
+                            <p className="text-xs text-gray-400 mb-2">Tap copy, or manually select text below:</p>
+                            <textarea 
+                                readOnly
+                                value={exportString}
+                                className="w-full h-24 bg-gray-900 text-blue-300 font-mono text-xs p-2 rounded mb-3 border border-gray-600 focus:outline-none focus:border-blue-500"
+                                onClick={(e) => e.target.select()}
+                            />
+                            <button 
+                                onClick={handleCopy} 
+                                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg transition-colors"
+                            >
+                                {copyStatus}
+                            </button>
+                        </div>
+
+                        <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                            <h3 className="text-white font-bold mb-2">Load Game</h3>
+                            <textarea 
+                                value={importText}
+                                onChange={(e) => setImportText(e.target.value)}
+                                placeholder="Paste saved game data here..."
+                                className="w-full h-24 bg-gray-900 text-green-400 font-mono text-xs p-2 rounded mb-3 border border-gray-600 focus:outline-none"
+                            />
+                            <button 
+                                onClick={() => onImport(importText)} 
+                                className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg"
+                            >
+                                📂 Load Data
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const loadState = (key, defaultVal) => {
+            try {
+                const saved = localStorage.getItem(key);
+                return saved ? JSON.parse(saved) : defaultVal;
+            } catch (e) {
+                return defaultVal;
+            }
+        };
+
+        const App = () => {
+            // -- STATE --
+            const [gameState, setGameState] = React.useState(() => loadState('gp_gameState', 'setup'));
+            const [players, setPlayers] = React.useState(() => loadState('gp_players', []));
+            const [deck, setDeck] = React.useState(() => loadState('gp_deck', []));
+            const [discardPile, setDiscardPile] = React.useState(() => loadState('gp_discard', []));
+            const [pot, setPot] = React.useState(() => loadState('gp_pot', 0));
+            const [settings, setSettings] = React.useState(() => loadState('gp_settings', { ante: 5, penalty: 1 }));
+            const [history, setHistory] = React.useState([]);
+
+            // Auto-Save
+            React.useEffect(() => { localStorage.setItem('gp_gameState', JSON.stringify(gameState)); }, [gameState]);
+            React.useEffect(() => { localStorage.setItem('gp_players', JSON.stringify(players)); }, [players]);
+            React.useEffect(() => { localStorage.setItem('gp_deck', JSON.stringify(deck)); }, [deck]);
+            React.useEffect(() => { localStorage.setItem('gp_discard', JSON.stringify(discardPile)); }, [discardPile]);
+            React.useEffect(() => { localStorage.setItem('gp_pot', JSON.stringify(pot)); }, [pot]);
+            React.useEffect(() => { localStorage.setItem('gp_settings', JSON.stringify(settings)); }, [settings]);
+
+            // Inputs / UI State
+            const [newName, setNewName] = React.useState('');
+            const [activePlayer, setActivePlayer] = React.useState(null);
+            const [showRules, setShowRules] = React.useState(false);
+            const [showTools, setShowTools] = React.useState(false);
+            const [showEndConfirm, setShowEndConfirm] = React.useState(false);
+            const [showResetConfirm, setShowResetConfirm] = React.useState(false);
+            const [swapMode, setSwapMode] = React.useState(null); 
+
+            // --- UNDO LOGIC ---
+            const saveToHistory = () => {
+                const snapshot = {
+                    gameState,
+                    players: JSON.parse(JSON.stringify(players)),
+                    deck: JSON.parse(JSON.stringify(deck)),
+                    discardPile: JSON.parse(JSON.stringify(discardPile)),
+                    pot,
+                    settings
+                };
+                setHistory(prev => [...prev.slice(-10), snapshot]);
+            };
+
+            const undoAction = () => {
+                if (history.length === 0) return alert("Nothing to undo!");
+                const lastState = history[history.length - 1];
+                
+                setGameState(lastState.gameState);
+                setPlayers(lastState.players);
+                setDeck(lastState.deck);
+                setDiscardPile(lastState.discardPile);
+                setPot(lastState.pot);
+                setSettings(lastState.settings);
+                
+                setHistory(prev => prev.slice(0, -1));
+                setShowTools(false);
+                setSwapMode(null);
+            };
+
+            const importGame = (str) => {
+                try {
+                    const data = JSON.parse(str);
+                    if (!data.players || !data.deck) throw new Error("Invalid data");
+                    
+                    saveToHistory();
+                    setGameState(data.gameState);
+                    setPlayers(data.players);
+                    setDeck(data.deck);
+                    setDiscardPile(data.discardPile || []);
+                    setPot(data.pot);
+                    setSettings(data.settings);
+                    
+                    setShowTools(false);
+                    alert("Game loaded successfully!");
+                } catch (e) {
+                    alert("Invalid Save Data. Please paste the full code.");
+                }
+            };
+
+            // --- ACTIONS ---
+
+            const initiateReset = () => {
+                setShowResetConfirm(true);
+            };
+
+            const performReset = () => {
+                const savedSettings = settings; 
+                localStorage.clear(); // Clear old data
+                
+                // Soft Reset (keep settings)
+                setGameState('setup');
+                setPlayers([]);
+                setDeck([]);
+                setDiscardPile([]);
+                setPot(0);
+                setHistory([]);
+                setSettings(savedSettings); // Restore settings
+                
+                // Save settings back immediately
+                localStorage.setItem('gp_settings', JSON.stringify(savedSettings));
+                
+                setShowResetConfirm(false);
+            };
+
+            const addPlayer = () => {
+                if (!newName) return;
+                setPlayers([...players, {
+                    id: Date.now(),
+                    name: newName,
+                    hand: [],
+                    contribution: settings.ante,
+                    revealed: false
+                }]);
+                setNewName('');
+            };
+
+            const startGame = () => {
+                if (players.length < 1) return;
+                if (deck.length === 0) setDeck(createDeck());
+                setPot(players.length * settings.ante);
+                setGameState('playing');
+            };
+
+            const handleAction = (player) => {
+                setActivePlayer(player);
+            };
+
+            const dealCards = (count) => {
+                let currentDeck = [...deck];
+                let currentDiscard = [...discardPile];
+
+                // Auto-Reshuffle Check
+                if (currentDeck.length < count) {
+                    if (currentDeck.length + currentDiscard.length < count) {
+                        alert("Not enough cards in deck AND discard pile! Someone is hoarding cards!");
+                        return;
+                    }
+                    
+                    // Reshuffle Logic
+                    const newDeckCards = [...currentDeck, ...currentDiscard];
+                    currentDeck = shuffle(newDeckCards);
+                    currentDiscard = []; // clear discard
+                    
+                    setDeck(currentDeck);
+                    setDiscardPile(currentDiscard);
+                    alert("Deck shuffled from discard pile! 🔄");
+                }
+                
+                saveToHistory(); // Save before deal
+
+                const cardsToDeal = currentDeck.slice(0, count);
+                const remainingDeck = currentDeck.slice(count);
+                setDeck(remainingDeck);
+                setDiscardPile(currentDiscard); 
+
+                const player = activePlayer;
+                const currentHand = [...player.hand];
+                
+                // Mark new cards for visual cue
+                const taggedNewCards = cardsToDeal.map(c => ({...c, isNew: true}));
+                const allCards = [...currentHand, ...taggedNewCards];
+
+                if (allCards.length > MAX_HAND_SIZE) {
+                    setSwapMode({ 
+                        playerId: player.id, 
+                        allCards: allCards,
+                        selectedIds: [], 
+                        cardsToDiscardCount: allCards.length - MAX_HAND_SIZE
+                    });
+                    setActivePlayer(null); 
+                } else {
+                    setPlayers(prev => prev.map(p => 
+                        p.id === player.id ? { ...p, hand: allCards } : p
+                    ));
+                    setActivePlayer(null);
+                    
+                    // Remove "New" tag after 3 seconds for valid cards in hand
+                    setTimeout(() => {
+                        setPlayers(prev => prev.map(p => {
+                            if (p.id === player.id) {
+                                return {
+                                    ...p,
+                                    hand: p.hand.map(c => ({ ...c, isNew: false }))
+                                };
+                            }
+                            return p;
+                        }));
+                    }, 3000);
+                }
+            };
+
+            const toggleDiscardSelection = (cardId) => {
+                if (!swapMode) return;
+                setSwapMode(prev => {
+                    const isSelected = prev.selectedIds.includes(cardId);
+                    let newSelected;
+                    if (isSelected) {
+                        newSelected = prev.selectedIds.filter(id => id !== cardId);
+                    } else {
+                        newSelected = [...prev.selectedIds, cardId];
+                    }
+                    return { ...prev, selectedIds: newSelected };
+                });
+            };
+
+            const confirmDiscard = () => {
+                if (!swapMode) return;
+                const { playerId, allCards, selectedIds } = swapMode;
+                
+                saveToHistory(); 
+
+                // Process Discards
+                const cardsToDiscard = allCards.filter(c => selectedIds.includes(c.id));
+                const finalHand = allCards
+                    .filter(c => !selectedIds.includes(c.id))
+                    .map(({ isNew, ...rest }) => rest); 
+
+                // Add discards to pile
+                setDiscardPile(prev => [...prev, ...cardsToDiscard]);
+
+                setPlayers(prev => prev.map(p => 
+                    p.id === playerId ? { ...p, hand: finalHand } : p
+                ));
+                
+                setSwapMode(null);
+            };
+
+            const handlePenalty = () => {
+                saveToHistory();
+                setPot(prev => prev + settings.penalty);
+                setPlayers(prev => prev.map(p => 
+                    p.id === activePlayer.id ? { ...p, contribution: p.contribution + settings.penalty } : p
+                ));
+                setActivePlayer(null);
+            };
+
+            const toggleReveal = (pid) => {
+                setPlayers(prev => prev.map(p => 
+                    p.id === pid ? { ...p, revealed: !p.revealed } : p
+                ));
+            };
+
+            // --- RENDER ---
+
+            if (gameState === 'setup') {
+                return (
+                    <div className="min-h-screen bg-green-900 p-6 flex flex-col items-center justify-center text-white">
+                        <div className="max-w-md w-full space-y-6">
+                            <div className="text-center">
+                                <h1 className="text-4xl font-bold mb-2">🏌️‍♂️ Golf Poker</h1>
+                                <p className="text-green-300">7-Card Stud Edition</p>
+                            </div>
+                            
+                            <div className="bg-green-800 p-6 rounded-2xl shadow-xl border border-green-700">
+                                <h2 className="font-bold mb-4">Add Players</h2>
+                                <div className="flex gap-2 mb-2">
+                                    <input 
+                                        className="flex-1 bg-green-900 border border-green-600 rounded-lg px-4 py-3 focus:outline-none focus:border-yellow-400"
+                                        placeholder="Name (e.g. Rory)"
+                                        value={newName}
+                                        onChange={e => setNewName(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && addPlayer()}
+                                    />
+                                    <button onClick={addPlayer} className="bg-green-600 hover:bg-green-500 px-4 py-3 rounded-lg font-bold shadow-md">Add</button>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4 mt-4">
+                                    <div>
+                                        <label className="text-xs text-green-300 uppercase font-bold">Ante ($)</label>
+                                        <input type="number" value={settings.ante} onChange={e => setSettings({...settings, ante: +e.target.value})} className="w-full bg-green-900 border border-green-600 rounded p-2 text-center" />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-green-300 uppercase font-bold">Penalty ($)</label>
+                                        <input type="number" value={settings.penalty} onChange={e => setSettings({...settings, penalty: +e.target.value})} className="w-full bg-green-900 border border-green-600 rounded p-2 text-center" />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2 mt-4">
+                                    {players.map(p => (
+                                        <div key={p.id} className="flex justify-between items-center bg-green-900/50 p-3 rounded">
+                                            <span>{p.name}</span>
+                                            <span className="text-xs text-green-300 opacity-60">Ready</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <button onClick={startGame} disabled={players.length < 1} className="w-full bg-yellow-500 text-black font-bold py-4 rounded-xl text-xl shadow-lg disabled:opacity-50">
+                                Start Round ⛳
+                            </button>
+                            
+                            <div className="flex justify-center mt-4">
+                                <button onClick={() => setShowTools(true)} className="text-green-300 text-sm py-2 hover:text-white flex items-center gap-1">
+                                    ⚙️ Tools / Load Game
+                                </button>
+                            </div>
+                        </div>
+
+                        {showTools && <ToolsModal onClose={() => setShowTools(false)} onImport={importGame} currentData={{gameState, players, deck, discardPile, pot, settings}} onUndo={undoAction} hasHistory={history.length > 0} />}
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen felt-bg pb-32 relative">
+                    
+                    {/* Header */}
+                    <div className="sticky top-0 z-20 bg-green-900/90 backdrop-blur border-b border-green-700 text-white p-3 shadow-lg">
+                        <div className="flex justify-between items-center max-w-lg mx-auto">
+                            <div className="flex gap-2">
+                                <button onClick={() => setShowRules(true)} className="text-xs bg-green-700 px-3 py-1 rounded-full border border-green-500 hover:bg-green-600">
+                                    📜 Rules
+                                </button>
+                                <button onClick={() => setShowTools(true)} className="text-xs bg-yellow-700 px-3 py-1 rounded-full border border-yellow-600 hover:bg-yellow-600">
+                                    ⚙️ Tools
+                                </button>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-yellow-400 font-bold text-2xl">${pot}</div>
+                                <div className="text-[10px] text-green-300 uppercase tracking-widest">Pot Size</div>
+                            </div>
+                            <div className="text-xs text-green-300 text-right flex flex-col items-end">
+                                <span>{deck.length} Deck</span>
+                                <span className="text-red-300">{discardPile.length} Discard</span>
+                                {history.length > 0 && <button onClick={undoAction} className="text-white mt-1">↩️ Undo</button>}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Swap Mode Overlay */}
+                    {swapMode && (
+                        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4 overflow-y-auto">
+                            <div className="bg-white rounded-xl w-full max-w-lg overflow-hidden shadow-2xl my-auto">
+                                <div className="p-4 bg-gray-50 border-b text-center">
+                                    <h2 className="text-xl font-bold text-gray-800">Hand Limit Reached!</h2>
+                                    <p className="text-gray-500 text-sm">
+                                        Select <span className="font-bold text-red-600">{swapMode.cardsToDiscardCount}</span> cards to discard.
+                                    </p>
+                                </div>
+                                
+                                <div className="p-6 bg-gray-100 flex flex-wrap gap-3 justify-center">
+                                    {swapMode.allCards.map((card, idx) => (
+                                        <Card 
+                                            key={card.id || idx} 
+                                            card={card} 
+                                            onClick={() => toggleDiscardSelection(card.id)}
+                                            isSelected={swapMode.selectedIds.includes(card.id)}
+                                        />
+                                    ))}
+                                </div>
+
+                                <div className="p-4 bg-white border-t">
+                                    <button 
+                                        onClick={confirmDiscard}
+                                        disabled={swapMode.selectedIds.length !== swapMode.cardsToDiscardCount}
+                                        className="w-full py-4 rounded-xl font-bold text-lg shadow-lg transition-all disabled:opacity-50 disabled:bg-gray-300 disabled:text-gray-500 bg-red-600 hover:bg-red-500 text-white"
+                                    >
+                                        {swapMode.selectedIds.length !== swapMode.cardsToDiscardCount 
+                                            ? `Select ${swapMode.cardsToDiscardCount - swapMode.selectedIds.length} more...` 
+                                            : "Confirm Discard 🗑️"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Main List */}
+                    <div className="max-w-lg mx-auto p-4 space-y-4">
+                        {players.map(player => {
+                            const bestHand = evaluateHand(player.hand);
+                            const isMaxed = player.hand.length >= MAX_HAND_SIZE;
+                            return (
+                                <div key={player.id} className={`bg-white rounded-xl shadow-xl overflow-hidden ${player.revealed ? 'ring-2 ring-yellow-400' : ''}`}>
+                                    {/* Player Header */}
+                                    <div className="bg-gray-50 p-3 flex justify-between items-center border-b">
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="font-bold text-gray-800 text-lg">{player.name}</h3>
+                                            </div>
+                                            <div className="text-xs text-gray-500 flex items-center">
+                                                <span>Paid: <span className="text-red-600 font-bold">${player.contribution}</span></span>
+                                                <span className="mx-1">•</span>
+                                                <span>Cards: {player.hand.length}/{MAX_HAND_SIZE}</span>
+                                                {isMaxed && (
+                                                    <span className="ml-2 bg-red-100 text-red-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-200">MAX</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {gameState === 'playing' && (
+                                            <button 
+                                                onClick={() => handleAction(player)}
+                                                className={`px-4 py-2 rounded-lg font-bold text-sm shadow-sm transition-transform active:scale-95 text-white ${isMaxed ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'}`}
+                                            >
+                                                Action
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {/* Hand Area */}
+                                    <div className="p-3 min-h-[100px] bg-green-50/50">
+                                        <div className="flex flex-wrap gap-1.5 justify-center">
+                                            {player.hand.length === 0 ? (
+                                                <span className="text-gray-400 italic text-sm py-4">Waiting for cards...</span>
+                                            ) : (
+                                                player.hand.map((card, idx) => (
+                                                    <Card key={idx} card={card} faceDown={!player.revealed && gameState !== 'showdown'} small={player.hand.length > 5} />
+                                                ))
+                                            )}
+                                        </div>
+                                        
+                                        {(player.revealed || gameState === 'showdown') && player.hand.length >= 5 && (
+                                            <div className="mt-3 text-center bg-yellow-100 text-yellow-800 text-sm font-bold py-1 rounded">
+                                                {bestHand.name}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Peek Button */}
+                                    {gameState === 'playing' && (
+                                        <button 
+                                            onClick={() => toggleReveal(player.id)}
+                                            className="w-full py-2 bg-gray-100 text-gray-500 hover:text-gray-700 text-xs font-bold uppercase tracking-wider border-t hover:bg-gray-200"
+                                        >
+                                            {player.revealed ? "Hide Hand" : "Peek Hand"}
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Action Sheet Modal */}
+                    {activePlayer && (
+                        <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 animate-fade-in" onClick={() => setActivePlayer(null)}>
+                            <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+                                <div className="p-4 bg-gray-50 border-b">
+                                    <h3 className="font-bold text-xl">{activePlayer.name}</h3>
+                                    <p className="text-sm text-gray-500">Select Action</p>
+                                </div>
+                                <div className="p-4 space-y-3">
+                                    <button onClick={() => dealCards(1)} className="w-full bg-green-100 hover:bg-green-200 text-green-900 p-4 rounded-xl flex items-center justify-between border border-green-300">
+                                        <div className="text-left">
+                                            <div className="font-bold text-lg">Deal 1 Card 🃏</div>
+                                            <div className="text-xs opacity-75">Birdie, 1-Putt, Sandy, CTP</div>
+                                        </div>
+                                    </button>
+                                    
+                                    <button onClick={() => dealCards(2)} className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-900 p-4 rounded-xl flex items-center justify-between border border-yellow-300">
+                                        <div className="text-left">
+                                            <div className="font-bold text-lg">Deal 2 Cards 🃏🃏</div>
+                                            <div className="text-xs opacity-75">Eagle or 0-Putt (Chip-in)</div>
+                                        </div>
+                                    </button>
+
+                                    <button onClick={handlePenalty} className="w-full bg-red-50 hover:bg-red-100 text-red-900 p-4 rounded-xl flex items-center justify-between border border-red-200">
+                                        <div className="text-left">
+                                            <div className="font-bold text-lg">Add Penalty ($1) 💸</div>
+                                            <div className="text-xs opacity-75">Water Hazard OR Each Putt > 2</div>
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Rules & Tools Modals */}
+                    {showRules && <CheatSheet onClose={() => setShowRules(false)} />}
+                    {showTools && <ToolsModal onClose={() => setShowTools(false)} onImport={importGame} currentData={{gameState, players, deck, discardPile, pot, settings}} onUndo={undoAction} hasHistory={history.length > 0} />}
+                    {gameState === 'showdown' && <WinnerModal players={players} pot={pot} onNewGame={initiateReset} />}
+                    
+                    {/* CONFIRMATION MODALS */}
+                    {showEndConfirm && (
+                        <ConfirmEndModal 
+                            onConfirm={() => {
+                                setGameState('showdown');
+                                setShowEndConfirm(false);
+                            }} 
+                            onCancel={() => setShowEndConfirm(false)} 
+                        />
+                    )}
+                    {showResetConfirm && <ConfirmResetModal onConfirm={performReset} onCancel={() => setShowResetConfirm(false)} />}
+
+                    {/* Footer */}
+                    <div className="fixed bottom-0 left-0 right-0 p-6 z-40 bg-gradient-to-t from-black/80 to-transparent flex justify-center">
+                        {gameState === 'playing' ? (
+                            <button 
+                                onClick={() => setShowEndConfirm(true)}
+                                className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 px-8 rounded-full shadow-xl border-2 border-yellow-300 transform transition active:scale-95 text-lg"
+                            >
+                                Finish Round & Showdown 🏆
+                            </button>
+                        ) : null}
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
