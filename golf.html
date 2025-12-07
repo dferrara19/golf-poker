@@ -19,7 +19,7 @@
 
     <!-- Embedded Icon & Manifest Logic -->
     <script>
-        // 1. Define the Icon (SVG)
+        // 1. Define the Icon (SVG) - The emoji here caused the btoa error
         const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
             <rect width="512" height="512" fill="#14532d"/>
             <circle cx="256" cy="256" r="230" fill="none" stroke="#facc15" stroke-width="20" stroke-dasharray="40 20"/>
@@ -27,8 +27,9 @@
             <text x="50%" y="85%" text-anchor="middle" font-size="60" font-family="Arial" font-weight="bold" fill="#facc15" letter-spacing="2">GOLF</text>
         </svg>`;
         
-        // 2. Convert to Data URI
-        const iconUrl = "data:image/svg+xml;base64," + btoa(iconSvg);
+        // 2. Convert to Data URI (Fixing Unicode/Emoji issue with btoa)
+        // We use unescape(encodeURIComponent(str)) to handle the emoji characters correctly
+        const iconUrl = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(iconSvg)));
 
         // 3. Inject Link Tags for Icons
         const head = document.head;
@@ -60,7 +61,8 @@
         };
         
         const manifestString = JSON.stringify(manifest);
-        const manifestUrl = "data:application/manifest+json;base64," + btoa(manifestString);
+        // Also fix encoding here just in case text contains special chars
+        const manifestUrl = "data:application/manifest+json;base64," + btoa(unescape(encodeURIComponent(manifestString)));
         
         const manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
@@ -192,7 +194,7 @@
 
             const highCard = sorted[0].value;
 
-            if (isStraight && isFlush) return { name: "Straight Flush", value: 8000 + highCard }; // Tie breaker improved logic needed fully but basic high card suffices for casual
+            if (isStraight && isFlush) return { name: "Straight Flush", value: 8000 + highCard }; 
             if (is4Kind) return { name: "Four of a Kind", value: 7000 + highCard };
             if (isFullHouse) return { name: "Full House", value: 6000 + highCard };
             if (isFlush) return { name: "Flush", value: 5000 + highCard };
