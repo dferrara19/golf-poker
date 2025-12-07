@@ -2,14 +2,79 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Golf Poker: Ultimate Edition</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Golf Poker</title>
+    
+    <!-- PWA Settings -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#14532d">
+    
+    <!-- React & Tailwind -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Embedded Icon & Manifest Logic -->
+    <script>
+        // 1. Define the Icon (SVG)
+        const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+            <rect width="512" height="512" fill="#14532d"/>
+            <circle cx="256" cy="256" r="230" fill="none" stroke="#facc15" stroke-width="20" stroke-dasharray="40 20"/>
+            <text x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="280" font-family="Arial">🃏</text>
+            <text x="50%" y="85%" text-anchor="middle" font-size="60" font-family="Arial" font-weight="bold" fill="#facc15" letter-spacing="2">GOLF</text>
+        </svg>`;
+        
+        // 2. Convert to Data URI
+        const iconUrl = "data:image/svg+xml;base64," + btoa(iconSvg);
+
+        // 3. Inject Link Tags for Icons
+        const head = document.head;
+        
+        const appleIcon = document.createElement('link');
+        appleIcon.rel = 'apple-touch-icon';
+        appleIcon.href = iconUrl;
+        head.appendChild(appleIcon);
+
+        const favIcon = document.createElement('link');
+        favIcon.rel = 'icon';
+        favIcon.href = iconUrl;
+        head.appendChild(favIcon);
+
+        // 4. Create & Inject Manifest (Data URI)
+        const manifest = {
+            "name": "Golf Poker",
+            "short_name": "Golf Poker",
+            "start_url": ".",
+            "display": "standalone",
+            "background_color": "#14532d",
+            "theme_color": "#14532d",
+            "orientation": "portrait",
+            "icons": [{
+                "src": iconUrl,
+                "sizes": "512x512",
+                "type": "image/svg+xml"
+            }]
+        };
+        
+        const manifestString = JSON.stringify(manifest);
+        const manifestUrl = "data:application/manifest+json;base64," + btoa(manifestString);
+        
+        const manifestLink = document.createElement('link');
+        manifestLink.rel = 'manifest';
+        manifestLink.href = manifestUrl;
+        head.appendChild(manifestLink);
+    </script>
+
     <style>
-        body { background-color: #14532d; touch-action: manipulation; } /* green-900 */
+        body { 
+            background-color: #14532d; 
+            touch-action: manipulation; 
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: none; /* Prevents pull-to-refresh on mobile */
+        }
         .card-enter { animation: flyIn 0.3s ease-out; }
         @keyframes flyIn {
             from { transform: translateY(10px); opacity: 0; }
@@ -127,7 +192,7 @@
 
             const highCard = sorted[0].value;
 
-            if (isStraight && isFlush) return { name: "Straight Flush", value: 8000 + straightHigh }; 
+            if (isStraight && isFlush) return { name: "Straight Flush", value: 8000 + highCard }; // Tie breaker improved logic needed fully but basic high card suffices for casual
             if (is4Kind) return { name: "Four of a Kind", value: 7000 + highCard };
             if (isFullHouse) return { name: "Full House", value: 6000 + highCard };
             if (isFlush) return { name: "Flush", value: 5000 + highCard };
@@ -581,7 +646,19 @@
 
             const startGame = () => {
                 if (players.length < 1) return;
-                if (deck.length === 0) setDeck(createDeck());
+                
+                // Generate deck
+                let currentDeck = deck.length > 0 ? [...deck] : createDeck();
+                
+                // Deal 2 cards to everyone
+                const updatedPlayers = players.map(p => {
+                    const dealt = currentDeck.slice(0, 2);
+                    currentDeck = currentDeck.slice(2);
+                    return { ...p, hand: [...p.hand, ...dealt] };
+                });
+
+                setDeck(currentDeck);
+                setPlayers(updatedPlayers);
                 setPot(players.length * settings.ante);
                 setGameState('playing');
             };
